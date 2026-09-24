@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -24,6 +24,56 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Find project ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP project file found."
+            exit 1
+          fi
+
+          echo "Found ZIP:"
+          echo "$ZIP_FILE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -o "$ZIP_FILE" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 4 -type f | head -200
+
+      - name: Find Gradle project
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_ROOT=$(find extracted -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -print -quit | xargs -r dirname)
+
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: settings.gradle.kts or settings.gradle was not found."
+            echo "The ZIP does not contain a valid Android Gradle project."
+            exit 1
+          fi
+
+          echo "Android project found at:"
+          echo "$PROJECT_ROOT"
+
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -31,11 +81,40 @@ jobs:
           cache-disabled: true
 
       - name: Build Debug APK
-        run: gradle --no-daemon assembleDebug
+        shell: bash
+        run: |
+          set -e
+
+          echo "Building project:"
+          echo "$PROJECT_ROOT"
+
+          cd "$PROJECT_ROOT"
+
+          gradle --no-daemon assembleDebug
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find "$PROJECT_ROOT" \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK found:"
+          echo "$APK"
+
+          cp "$APK" "$GITHUB_WORKSPACE/2FA-debug.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: 2FA-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: 2FA-debug.apk
           if-no-files-found: error
